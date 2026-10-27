@@ -1356,6 +1356,14 @@ Tasks queues receive tasks and their related data, runs them, then delivers thei
 
 If queues start to grow significantly, the queue size can become larger than memory, resulting in cache misses, disk reads, and even slower performance.  [Back pressure](http://mechanical-sympathy.blogspot.com/2012/05/apply-back-pressure-when-overloaded.html) can help by limiting the queue size, thereby maintaining a high throughput rate and good response times for jobs already in the queue.  Once the queue fills up, clients get a server busy or HTTP 503 status code to try again later.  Clients can retry the request at a later time, perhaps with [exponential backoff](https://en.wikipedia.org/wiki/Exponential_backoff).
 
+#### Worked example: choosing a queue limit
+
+Suppose producers send 150 jobs per second while workers complete 120 jobs per second. During a two-minute burst, an unbounded queue grows by 30 jobs per second and accumulates 3,600 jobs. If each serialized job averages 8 KiB, the payloads alone occupy about 28.1 MiB (3,600 × 8 KiB); broker metadata, indexes, replication, and allocator overhead increase the actual footprint.
+
+A 2,000-job cap fills after about 66.7 seconds (2,000 ÷ 30). At that point, apply admission control—such as returning HTTP 503 with `Retry-After`, throttling producers, or persisting work to a durable store with an explicit retention limit—instead of allowing memory use to grow without bound. If arrivals then fall to 90 jobs per second while workers still complete 120, a capped backlog of 2,000 drains at a net 30 jobs per second and takes about 66.7 seconds to clear. The backlog represents about 16.7 seconds of service work at 120 jobs per second, but new arrivals consume most of that capacity.
+
+Choose the cap from both memory and latency budgets, using measured high-percentile job sizes rather than only the average. Retries should use exponential backoff with jitter and a bounded retry budget; handlers should be idempotent because a client can retry after a timeout even when the original job was accepted. Monitor queue depth, oldest-message age, rejection rate, and consumer throughput—depth alone can hide a stalled queue.
+
 ### Disadvantage(s): asynchronism
 
 * Use cases such as inexpensive calculations and realtime workflows might be better suited for synchronous operations, as introducing queues can add delays and complexity.
